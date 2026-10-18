@@ -147,3 +147,119 @@ replace("DictationImeService.kt",
             f.delete(); session = null; recorder = null; state = State.IDLE''')
 
 print("Applied 10 reliability hardening changes to the extracted project.")
+
+# Android platform speech recognition is the default: SIWC plan usage does not
+# currently support audio input. Retain the original experimental code for review.
+replace("DictationImeService.kt",
+'''    private var showManageUsage = false''',
+'''    private var showManageUsage = false
+    private var androidSpeech: AndroidSpeechBridge? = null
+    private var speechGeneration = 0L
+    private var speechPackage: String? = null
+    private var speechField = 0''')
+
+replace("DictationImeService.kt",
+'''                State.IDLE -> beginRecording()
+                State.RECORDING -> finishRecording()''',
+'''                State.IDLE -> beginSystemSpeech()
+                State.RECORDING -> if (androidSpeech != null) finishSystemSpeech() else finishRecording()''')
+
+replace("DictationImeService.kt",
+'''    private fun beginRecording() {''',
+'''    private fun beginSystemSpeech() {
+        if (state != State.IDLE) return
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            setStatus("Open Dictation Button and allow microphone access first.")
+            return
+        }
+        val info = currentInputEditorInfo
+        if (info == null || isPasswordField(info.inputType)) {
+            setStatus("Dictation is disabled for password and PIN fields.")
+            return
+        }
+        speechGeneration = generation.get()
+        speechPackage = info.packageName
+        speechField = info.fieldId
+        state = State.STARTING
+        render()
+        val bridge = AndroidSpeechBridge(this,
+            onResult = { words -> main.post { completeSystemSpeech(words) } },
+            onFailure = { message -> main.post { systemSpeechFailed(message) } })
+        androidSpeech = bridge
+        try {
+            bridge.begin()
+            state = State.RECORDING
+            recordingStartedAt = System.currentTimeMillis()
+            main.removeCallbacks(timerTick)
+            main.post(timerTick)
+            setStatus("Listening using Android speech recognition. Speech may be processed online by your configured provider.")
+            render()
+        } catch (t: Throwable) {
+            bridge.cancel()
+            androidSpeech = null
+            state = State.IDLE
+            setStatus("Android speech recognition unavailable: ${t.message ?: "unknown error"}", announce = true)
+            render()
+        }
+    }
+
+    private fun finishSystemSpeech() {
+        if (state != State.RECORDING || androidSpeech == null) return
+        state = State.TRANSCRIBING
+        main.removeCallbacks(timerTick)
+        androidSpeech?.finish()
+        render()
+        main.postDelayed({
+            if (androidSpeech != null && state == State.TRANSCRIBING) {
+                systemSpeechFailed("Speech recognizer timed out; try again.")
+            }
+        }, 15000)
+    }
+
+    private fun systemSpeechFailed(message: String) {
+        if (androidSpeech == null) return
+        androidSpeech?.cancel()
+        androidSpeech = null
+        state = State.IDLE
+        main.removeCallbacks(timerTick)
+        setStatus(message, announce = true)
+        render()
+    }
+
+    private fun completeSystemSpeech(text: String) {
+        if (androidSpeech == null || (state != State.RECORDING && state != State.TRANSCRIBING)) return
+        androidSpeech?.cancel()
+        androidSpeech = null
+        main.removeCallbacks(timerTick)
+        val info = currentInputEditorInfo
+        val sameEditor = generation.get() == speechGeneration &&
+            info != null && info.packageName == speechPackage &&
+            speechField != 0 && info.fieldId != 0 && info.fieldId == speechField &&
+            !isPasswordField(info.inputType)
+        pendingTranscript = text
+        RecoveryTextStore.save(this, text)
+        val inserted = if (sameEditor) currentInputConnection?.commitText(text, 1) == true else false
+        state = State.IDLE
+        if (inserted) {
+            pendingTranscript = null
+            RecoveryTextStore.clear(this)
+            setStatus("Dictation inserted.", announce = true)
+        } else {
+            setStatus("Transcript saved here. Tap Insert to put it in the current text field.", announce = true)
+        }
+        render()
+    }
+
+    private fun beginRecording() {''')
+
+replace("DictationImeService.kt",
+'''        try { recorder?.cancel() } catch (_: Throwable) {}''',
+'''        try { androidSpeech?.cancel() } catch (_: Throwable) {}
+        androidSpeech = null
+        try { recorder?.cancel() } catch (_: Throwable) {}''')
+
+replace("DictationImeService.kt",
+'''        else if (state == State.TRANSCRIBING) setStatus("Transcribing using your ChatGPT plan. No text is inserted until completion.")''',
+'''        else if (state == State.TRANSCRIBING) setStatus("Processing speech. No text inserted until recognition completes.")''')
+
+print("Default dictation now uses the Android speech recognizer; ChatGPT-plan audio is disabled.")
