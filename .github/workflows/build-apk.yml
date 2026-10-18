@@ -23,7 +23,9 @@ jobs:
           cp -a /tmp/dictation-source/dictation-button-v2/. .
           test -f audit.sh
       - name: Apply audited reliability fixes
-        run: python3 ci/reliability_v2.py
+        run: |
+          cp ci/overrides/AndroidSpeechBridge.kt android-ime/app/src/main/java/com/example/dictationbutton/AndroidSpeechBridge.kt
+          python3 ci/reliability_v2.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
