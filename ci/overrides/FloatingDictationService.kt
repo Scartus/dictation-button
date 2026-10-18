@@ -24,6 +24,9 @@ class FloatingDictationService : Service() {
     private var requestNumber = 0
     private var watchdog: Runnable? = null
     private var latest = ""
+    private var partial = ""
+    private var ready = false
+    private var heardSpeech = false
 
     override fun onBind(intent: Intent?) = null
 
@@ -131,45 +134,90 @@ class FloatingDictationService : Service() {
         }
         val number = ++requestNumber
         recording = true
-        mic?.text = "■ Stop"
+        ready = false
+        heardSpeech = false
+        partial = ""
+        mic?.text = "Preparing…"
+        mic?.isEnabled = false
         copy?.visibility = View.GONE
         status?.text = "Listening…"
         val r = SpeechRecognizer.createSpeechRecognizer(this)
         recognizer = r
         r.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {}
-            override fun onBeginningOfSpeech() {}
+            override fun onReadyForSpeech(params: Bundle?) {
+                if (number == requestNumber) {
+                    ready = true
+                    mic?.isEnabled = true
+                    mic?.text = "■ Stop"
+                    status?.text = "Listening — speak now"
+                }
+            }
+            override fun onBeginningOfSpeech() {
+                if (number == requestNumber) {
+                    heardSpeech = true
+                    status?.text = "Hearing speech…"
+                }
+            }
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() { status?.text = "Processing speech…" }
-            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEndOfSpeech() {
+                if (number != requestNumber) return
+                recording = false
+                mic?.text = "Processing…"
+                mic?.isEnabled = false
+                status?.text = "Processing speech…"
+                timeout(number, 12000, "Speech service did not return a result.")
+            }
+            override fun onPartialResults(partialResults: Bundle?) {
+                if (number != requestNumber) return
+                val candidate = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()?.trim().orEmpty()
+                if (candidate.isNotBlank()) {
+                    partial = candidate
+                    heardSpeech = true
+                    status?.text = "Hearing: " + candidate.take(100)
+                }
+            }
             override fun onEvent(eventType: Int, params: Bundle?) {}
             override fun onError(error: Int) {
-                if (number == requestNumber) finishWithError("Speech recognizer error $error. Try again.")
+                if (number != requestNumber) return
+                if (partial.isNotBlank() && (error == SpeechRecognizer.ERROR_NO_MATCH ||
+                        error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)) {
+                    finishWithTranscript(partial, "Partial text (please check)")
+                    return
+                }
+                val message = when (error) {
+                    SpeechRecognizer.ERROR_NO_MATCH ->
+                        if (!heardSpeech) "No speech detected (7). Wait until Listening appears, then speak."
+                        else "Speech heard but words not recognised (7). Try a shorter phrase."
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
+                        "No speech received (6). Try again after Listening appears."
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech service busy (8). Retry in a moment."
+                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
+                        "Speech provider network problem ($error). Check internet."
+                    else -> "Speech recognition error $error. Try again."
+                }
+                finishWithError(message)
             }
             override fun onResults(results: Bundle?) {
                 if (number != requestNumber) return
                 val transcript = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()?.trim().orEmpty()
-                if (transcript.isEmpty()) finishWithError("No words recognized.")
-                else {
-                    endRecognition()
-                    latest = transcript
-                    status?.text = transcript.take(160)
-                    copy?.visibility = View.VISIBLE
-                    status?.text = "Transcript ready — tap Copy: " + transcript.take(110)
-                }
+                if (transcript.isEmpty() && partial.isEmpty()) finishWithError("No words recognised.")
+                else finishWithTranscript(transcript.ifBlank { partial },
+                    if (transcript.isBlank()) "Partial text (please check)" else "Transcript ready")
             }
         })
         try {
             r.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                 .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false))
+                .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true))
             timeout(number, 75000, "No response from speech service. Tap Dictate to retry.")
         } catch(t: Throwable) { finishWithError(t.message ?: "Could not start speech recognition.") }
     }
     private fun stopRecording() {
         if (!recording) return
+        if (!ready) { status?.text = "Microphone still preparing…"; return }
         recording = false
         mic?.text = "Processing…"
         mic?.isEnabled = false
@@ -177,6 +225,12 @@ class FloatingDictationService : Service() {
         try { recognizer?.stopListening() }
         catch(t: Throwable) { finishWithError(t.message ?: "Could not finish recording."); return }
         timeout(requestNumber, 12000, "Speech provider did not respond after Stop. Try again.")
+    }
+    private fun finishWithTranscript(text: String, prefix: String) {
+        endRecognition()
+        latest = text
+        copy?.visibility = View.VISIBLE
+        status?.text = "$prefix: " + text.take(110)
     }
     private fun finishWithError(message: String) { endRecognition(); status?.text = message }
     private fun endRecognition() {
