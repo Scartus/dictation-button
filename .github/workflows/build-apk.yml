@@ -1,14 +1,26 @@
-name: Build Android APK
+name: Build Dictation Button APK from ZIP
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'dictation-button-v2-hardened.zip'
+      - '.github/workflows/build-apk.yml'
 permissions:
   contents: read
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Extract uploaded full project
+        run: |
+          test -f dictation-button-v2-hardened.zip || { echo "::error::Upload dictation-button-v2-hardened.zip to the root of this repository first."; exit 1; }
+          unzip -q dictation-button-v2-hardened.zip -d /tmp/dictation-source
+          test -f /tmp/dictation-source/dictation-button-v2/android-ime/settings.gradle.kts
+          cp -a /tmp/dictation-source/dictation-button-v2/. .
+          test -f audit.sh
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -19,12 +31,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.4.1'
-      - name: Verify source was imported
-        run: test -f android-ime/app/build.gradle.kts && test -f android-ime/settings.gradle.kts
-      - name: Assemble APK
+      - name: Static audit
+        run: bash audit.sh
+      - name: Build APK
         working-directory: android-ime
         run: gradle --no-daemon --stacktrace :app:assembleDebug
-      - name: Publish APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: DictationButton-v2-APK
