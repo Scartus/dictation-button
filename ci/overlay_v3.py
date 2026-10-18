@@ -16,7 +16,7 @@ s=s.replace('</application>', '''    <service android:name=".FloatingDictationSe
 manifest.write_text(s)
 act=root/"java/com/example/dictationbutton/SetupActivity.kt"
 s=act.read_text()
-s=s.replace('        render()\n    }\n\n    override fun onResume()', '''        val root = findViewById<android.view.ViewGroup>(android.R.id.content)
+s=s.replace('        render()\n    }\n\n    override fun onResume()', '''        val root = ((findViewById<android.view.ViewGroup>(android.R.id.content).getChildAt(0) as android.widget.ScrollView).getChildAt(0) as android.view.ViewGroup)
         val launchBubble = Button(this).apply {
             text = "Start floating microphone (keep Samsung Keyboard)"
             setOnClickListener {
