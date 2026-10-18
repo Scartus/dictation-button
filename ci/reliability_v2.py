@@ -277,3 +277,32 @@ m=m.replace(needle, '''    <queries>
     <application''',1)
 manifest.write_text(m)
 print("Declared Android speech-service package visibility.")
+
+# Remove ChatGPT sign-in from required setup for the system recognizer.
+replace("SetupActivity.kt",
+'''        testField.visibility = if (connected && mic && imeEnabled) View.VISIBLE else View.GONE''',
+'''        testField.visibility = if (mic && imeEnabled) View.VISIBLE else View.GONE''')
+replace("SetupActivity.kt",
+'''        micPermission.isEnabled = connected && !mic
+        enableIme.isEnabled = connected && mic && !imeEnabled
+        chooseIme.isEnabled = connected && mic && imeEnabled''',
+'''        micPermission.isEnabled = !mic
+        enableIme.isEnabled = mic && !imeEnabled
+        chooseIme.isEnabled = mic && imeEnabled''')
+replace("SetupActivity.kt",
+'''            !connected -> "1 of 4 · Connect your ChatGPT plan. No API key or separate API billing setup is required."
+            !mic -> "2 of 4 · ChatGPT connected. Allow microphone access."
+            !imeEnabled -> "3 of 4 · Enable Dictation Button in Android keyboard settings."
+            !imeSelected -> "4 of 4 · Choose Dictation Button as the current keyboard, then tap the test field below."''',
+'''            !mic -> "1 of 3 · Allow microphone access. No account or API key is needed for Android speech recognition."
+            !imeEnabled -> "2 of 3 · Enable Dictation Button in Android keyboard settings."
+            !imeSelected -> "3 of 3 · Choose Dictation Button as your keyboard, then tap the test field below."''')
+layout=Path("android-ime/app/src/main/res/layout/activity_setup.xml")
+xml=layout.read_text()
+xml=xml.replace("Accurate system-wide dictation powered by your ChatGPT plan. Setup is guided once; normal use is just Dictate, speak, Stop.",
+"Android speech dictation. No ChatGPT sign-in or API key required. Enable the microphone, choose this keyboard, then Dictate, speak, Stop.")
+xml=xml.replace("Privacy: recording begins only after you tap Dictate. Your recording is sent to OpenAI to produce the transcript using your ChatGPT plan. Successful temporary audio is deleted after transcription. Failed audio recovery is encrypted on this phone. ChatGPT sign-in does not give this app access to your ChatGPT conversations.",
+"Privacy: tapping Dictate starts Android speech recognition using your configured provider. That provider may process audio online depending on its settings. The app does not send audio to OpenAI through ChatGPT plan usage. You can review or delete locally recovered text.")
+xml=xml.replace('android:text="Continue with ChatGPT"','android:text="Experimental ChatGPT sign-in (not required)"')
+layout.write_text(xml)
+print("Setup no longer blocks dictation behind unsupported ChatGPT-plan audio.")
