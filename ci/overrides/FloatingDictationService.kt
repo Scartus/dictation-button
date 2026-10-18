@@ -15,6 +15,7 @@ class FloatingDictationService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var wm: WindowManager
     private var bubble: LinearLayout? = null
+    private var overlayParams: WindowManager.LayoutParams? = null
     private var mic: Button? = null
     private var status: TextView? = null
     private var copy: Button? = null
@@ -64,7 +65,32 @@ class FloatingDictationService : Service() {
         }
         row.addView(mic)
         row.addView(dismiss)
-        status = TextView(this).apply { text = "Ready"; setTextColor(-1); maxLines = 3 }
+        status = TextView(this).apply {
+            text = "Drag here to move"; setTextColor(-1); maxLines = 3
+            setPadding(12, 12, 12, 12)
+            var downX = 0f
+            var downY = 0f
+            var originalX = 0
+            var originalY = 0
+            setOnTouchListener { _, event ->
+                val params = overlayParams ?: return@setOnTouchListener false
+                when (event.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        downX = event.rawX; downY = event.rawY
+                        originalX = params.x; originalY = params.y
+                        true
+                    }
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        params.x = (originalX - (event.rawX - downX)).toInt().coerceAtLeast(0)
+                        params.y = (originalY + (event.rawY - downY)).toInt().coerceAtLeast(0)
+                        bubble?.let { wm.updateViewLayout(it, params) }
+                        true
+                    }
+                    android.view.MotionEvent.ACTION_UP -> true
+                    else -> false
+                }
+            }
+        }
         copy = Button(this).apply {
             text = "Copy transcript"
             visibility = View.GONE
@@ -89,6 +115,7 @@ class FloatingDictationService : Service() {
                 gravity = Gravity.TOP or Gravity.END
                 x = 6; y = 250
         }
+        overlayParams = params
         wm.addView(box, params)
     }
 
@@ -130,9 +157,7 @@ class FloatingDictationService : Service() {
                     latest = transcript
                     status?.text = transcript.take(160)
                     copy?.visibility = View.VISIBLE
-                    (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
-                        .setPrimaryClip(ClipData.newPlainText("Dictation", transcript))
-                    status?.text = "Copied automatically: " + transcript.take(110)
+                    status?.text = "Transcript ready — tap Copy: " + transcript.take(110)
                 }
             }
         })
