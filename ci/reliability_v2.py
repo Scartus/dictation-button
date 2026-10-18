@@ -263,3 +263,17 @@ replace("DictationImeService.kt",
 '''        else if (state == State.TRANSCRIBING) setStatus("Processing speech. No text inserted until recognition completes.")''')
 
 print("Default dictation now uses the Android speech recognizer; ChatGPT-plan audio is disabled.")
+
+manifest=Path("android-ime/app/src/main/AndroidManifest.xml")
+m=manifest.read_text()
+needle='    <application'
+assert needle in m
+m=m.replace(needle, '''    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
+    <application''',1)
+manifest.write_text(m)
+print("Declared Android speech-service package visibility.")
